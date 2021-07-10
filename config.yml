@@ -1,0 +1,6 @@
+world: world
+spacing: 16384
+overlap: 32
+low: -512
+high: 511
+# on bottom
