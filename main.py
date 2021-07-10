@@ -1,9 +1,11 @@
 from amulet.api.selection import SelectionGroup, SelectionBox
 from amulet.api.level import ImmutableStructure, World
+from amulet.api.level.base_level.clone import clone
 from amulet.api.data_types import Dimension, BlockCoordinatesAny, BlockCoordinates
 import yaml
 import amulet
 from amulet.api.errors import ChunkLoadError, ChunkDoesNotExist
+from  concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from dataclasses import dataclass
 import os
@@ -125,13 +127,14 @@ def mark_box_dirty(world: World, dimension, box):
         chunk = world.get_chunk(cx, cz, dimension)
         chunk.changed = True
 
+
 def progress_iter(gen, name):
     from progress.bar import Bar
     parts = 1e6
     with Bar(
         name,
-        max = parts,
-            suffix = '%(percent).1f%% - %(eta)ds'
+        max=parts,
+            suffix='%(percent).1f%% - %(eta)ds'
  ) as bar:
         last = 0
         try:
@@ -144,16 +147,48 @@ def progress_iter(gen, name):
         except StopIteration as e:
             return e.value
 
+import itertools
 def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
-    structure = progress_iter(ImmutableStructure.from_level_iter(
-        src_world, SelectionGroup(src_region), dimension), "load")
+    # structure = progress_iter(ImmutableStructure.from_level_iter(
+    #     src_world, SelectionGroup(src_region), dimension), "load")
+    from progress.bar import Bar
+
+    volume = src_region.volume
+    count = itertools.count()
+    def do_single_copy(p):
+        (sp, dp) = p
+        #print(sp, dp)
+        (sx, sy, sz) = sp
+        (dx, dy, dz) = dp
+        (block, block_entity) = src_world.get_version_block(sx, sy, sz, dimension, platform_version)
+        dst_world.set_version_block(dx, dy, dz, dimension, platform_version, block, block_entity)
+        i = next(count)
+        if(i % 1e6 == 1):
+            print(i/volume, sp, dp, block)
+    # with Bar(
+    # name,
+    # max = parts,
+    #         suffix = '%(percent).1f%% - %(eta)ds'
+    # ) as bar:
+
+    # with ProcessPoolExecutor() as executor:
+    #     executor.map(do_single_copy, zip(src_region.blocks, dst_region.blocks))
+    # for sp, dp in zip(src_region.blocks, dst_region.blocks):
+    #     do_single_copy((sp, dp))
+    #map(do_single_copy, zip(src_region.blocks, dst_region.blocks))
+    
+    # (block, block_entity) = level.get_version_block(
+    #     x, y, z, dimension, platform_version)
+    # level_out.set_version_block(
+    #     x, y, z, dimension, platform_version, block, block_entity)
 
     cx = ((dst_region.max_x + dst_region.min_x)>>1)
     cy = ((dst_region.max_y + dst_region.min_y)>>1)  #  Paste is from-centre
     cz = ((dst_region.max_z + dst_region.min_z)>>1)
     dst_region_midpoint = (cx, cy, cz)
-    progress_iter(dst_world.paste_iter(structure, dimension, src_region, dimension,
-                    dst_region_midpoint, copy_chunk_not_exist=False), "write")
+    progress_iter(clone(
+        src_world, dimension, SelectionGroup(src_region), dst_world, dimension, SelectionGroup(dst_region), dst_region_midpoint), "clone"
+    )
     print("marking as dirty")
     mark_box_dirty(dst_world, dimension, dst_region)
     print("did a copy")
@@ -163,14 +198,26 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
 
 def do_conversion(regions: List[LayerConfig]):
     level_out=amulet.load_level(os.path.join(worlds_output_path, "world"))
-    for region in regions:
+    regions.reverse()
+    def do(region):
         source_level=amulet.load_level(
-            os.path.join(worlds_input_path, region.world))
+        os.path.join(worlds_input_path, region.world))
         copy_region(source_level, region.src_selection,
                     level_out, region.dst_selection)
-        progress_iter(level_out.save_iter(), "save")
         source_level.close()
-    
+    with ProcessPoolExecutor() as executor:
+        for region in regions:
+            do(region)
+            progress_iter(level_out.save_iter(), "save")
+            #executor.
+    # for region in regions:
+    #     do(region)
+    #     source_level=amulet.load_level(
+    #         os.path.join(worlds_input_path, region.world))
+    #     copy_region(source_level, region.src_selection,
+    #                 level_out, region.dst_selection)
+    #     source_level.close()
+
     level_out.close()
     # can't create anvil worlds becuse fml
     # (platform, version) = platform_version
