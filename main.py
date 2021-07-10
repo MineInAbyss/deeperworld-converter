@@ -158,14 +158,13 @@ def progress_iter(gen, name):
 def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
     # structure = progress_iter(ImmutableStructure.from_level_iter(
     #     src_world, SelectionGroup(src_region), dimension), "load")
-    from progress.bar import Bar
-
     volume = src_region.volume
-    count = itertools.count()
     cx = ((dst_region.max_x + dst_region.min_x) >> 1)
     cy = ((dst_region.max_y + dst_region.min_y) >> 1)  # Paste is from-centre
     cz = ((dst_region.max_z + dst_region.min_z) >> 1)
     dst_region_midpoint = (cx, cy, cz)
+    print("clone", SelectionGroup(src_region), dst_region_midpoint)
+
     clone_op = dst_world.paste_iter(src_world, dimension, SelectionGroup(src_region),
     dimension, dst_region_midpoint)
     progress_iter(clone_op, "clone")
