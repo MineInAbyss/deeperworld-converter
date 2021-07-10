@@ -1,3 +1,4 @@
+import itertools
 from amulet.api.selection import SelectionGroup, SelectionBox
 from amulet.api.level import ImmutableStructure, World
 from amulet.api.level.base_level.clone import clone
@@ -5,7 +6,7 @@ from amulet.api.data_types import Dimension, BlockCoordinatesAny, BlockCoordinat
 import yaml
 import amulet
 from amulet.api.errors import ChunkLoadError, ChunkDoesNotExist
-from  concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from dataclasses import dataclass
 import os
@@ -73,10 +74,12 @@ class LayerConfig:
     @property
     def src_selection(self):
         return SelectionBox(self.max.cords(), self.min.cords())
-
+    @property
+    def offset(self):
+        return Vec3I.sub(self.pos, self.max)
     @property
     def dst_selection(self):
-        return SelectionBox(self.pos.cords(), Vec3I.add(self.pos, self.size).cords())
+        return SelectionBox(self.pos.cords(), Vec3I.add(self.pos, Vec3I.sub(self.min, self.max)).cords())
 
 
 @dataclass
@@ -124,22 +127,26 @@ dimension = "minecraft:overworld"
 
 def mark_box_dirty(world: World, dimension, box):
     for cx, cz in box.chunk_locations():  # Mark the edits as dirty
-        chunk = world.get_chunk(cx, cz, dimension)
-        chunk.changed = True
+        if(world.has_chunk(cx, cz, dimension)):
+            chunk = world.get_chunk(cx, cz, dimension)
+            chunk.changed = True
 
 
 def progress_iter(gen, name):
     from progress.bar import Bar
     parts = 1e6
     with Bar(
-        name,
-        max=parts,
-            suffix='%(percent).1f%% - %(eta)ds'
- ) as bar:
+            name,
+            max=parts,
+        suffix='%(percent).1f%% - %(eta)ds'
+    ) as bar:
         last = 0
         try:
             while True:
                 new = next(gen)
+                if not isinstance(new, float):
+                    (n, d) = new
+                    new = n/d
                 diff = int(parts*new) - int(parts*last)
                 last = new
                 if(diff >= 1):
@@ -147,7 +154,7 @@ def progress_iter(gen, name):
         except StopIteration as e:
             return e.value
 
-import itertools
+
 def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
     # structure = progress_iter(ImmutableStructure.from_level_iter(
     #     src_world, SelectionGroup(src_region), dimension), "load")
@@ -155,61 +162,55 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
 
     volume = src_region.volume
     count = itertools.count()
-    def do_single_copy(p):
-        (sp, dp) = p
-        #print(sp, dp)
-        (sx, sy, sz) = sp
-        (dx, dy, dz) = dp
-        (block, block_entity) = src_world.get_version_block(sx, sy, sz, dimension, platform_version)
-        dst_world.set_version_block(dx, dy, dz, dimension, platform_version, block, block_entity)
-        i = next(count)
-        if(i % 1e6 == 1):
-            print(i/volume, sp, dp, block)
-    # with Bar(
-    # name,
-    # max = parts,
-    #         suffix = '%(percent).1f%% - %(eta)ds'
-    # ) as bar:
-
-    # with ProcessPoolExecutor() as executor:
-    #     executor.map(do_single_copy, zip(src_region.blocks, dst_region.blocks))
-    # for sp, dp in zip(src_region.blocks, dst_region.blocks):
-    #     do_single_copy((sp, dp))
-    #map(do_single_copy, zip(src_region.blocks, dst_region.blocks))
-    
-    # (block, block_entity) = level.get_version_block(
-    #     x, y, z, dimension, platform_version)
-    # level_out.set_version_block(
-    #     x, y, z, dimension, platform_version, block, block_entity)
-
-    cx = ((dst_region.max_x + dst_region.min_x)>>1)
-    cy = ((dst_region.max_y + dst_region.min_y)>>1)  #  Paste is from-centre
-    cz = ((dst_region.max_z + dst_region.min_z)>>1)
+    cx = ((dst_region.max_x + dst_region.min_x) >> 1)
+    cy = ((dst_region.max_y + dst_region.min_y) >> 1)  # Paste is from-centre
+    cz = ((dst_region.max_z + dst_region.min_z) >> 1)
     dst_region_midpoint = (cx, cy, cz)
-    progress_iter(clone(
-        src_world, dimension, SelectionGroup(src_region), dst_world, dimension, SelectionGroup(dst_region), dst_region_midpoint), "clone"
-    )
-    print("marking as dirty")
+    clone_op = dst_world.paste_iter(src_world, dimension, SelectionGroup(src_region),
+    dimension, dst_region_midpoint)
+    progress_iter(clone_op, "clone")
+    #print("marking as dirty")
     mark_box_dirty(dst_world, dimension, dst_region)
-    print("did a copy")
+    #print("did a copy")
     # for cx, cz in src_region.chunk_locations():
     #     print("copy chunk", cx, cz, "from", src_world.level_path)
 
 
 def do_conversion(regions: List[LayerConfig]):
-    level_out=amulet.load_level(os.path.join(worlds_output_path, "world"))
-    regions.reverse()
+    level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
+    #regions.reverse()
+
     def do(region):
-        source_level=amulet.load_level(
-        os.path.join(worlds_input_path, region.world))
-        copy_region(source_level, region.src_selection,
-                    level_out, region.dst_selection)
-        source_level.close()
-    with ProcessPoolExecutor() as executor:
-        for region in regions:
-            do(region)
-            progress_iter(level_out.save_iter(), "save")
-            #executor.
+        source_level = amulet.load_level(
+            os.path.join(worlds_input_path, region.world))
+        count = itertools.count()
+
+        def sub_do(s):
+            i = next(count)
+            
+            _, src_selection = s
+            dst_selection= src_selection.transform((1,1,1), (0,0,0), region.offset.cords())
+            #_, dst_selection = d
+            print("region", i, src_selection, dst_selection)
+            copy_region(source_level, src_selection,
+                        level_out, dst_selection)
+
+            if(i % 100 == 0 or True):
+                progress_iter(level_out.save_iter(), "save")
+                source_level.unload()
+                level_out.unload()
+        sub_chunk_size = 512/2
+        print("layer", region.name, region.src_selection.chunk_count(sub_chunk_size), region.src_selection, region.dst_selection)
+
+        list(map(sub_do, region.src_selection.chunk_boxes(sub_chunk_size)))
+        progress_iter(level_out.save_iter(), "save")
+        source_level.unload()
+        level_out.unload_unchanged()
+
+    # with ProcessPoolExecutor() as executor:
+    for region in regions:
+        do(region)
+        # executor.
     # for region in regions:
     #     do(region)
     #     source_level=amulet.load_level(
@@ -232,6 +233,6 @@ def do_conversion(regions: List[LayerConfig]):
     #     x, y, z, dimension, platform_version, block, block_entity)
 
 
-converter_confg=load_converter_confg()
-regions=load_deeperworld_confg(converter_confg)
+converter_confg = load_converter_confg()
+regions = load_deeperworld_confg(converter_confg)
 do_conversion(regions)
