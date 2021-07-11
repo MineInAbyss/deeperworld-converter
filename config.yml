@@ -1,6 +1,6 @@
 world: world
 spacing: 16384
 overlap: 32
-low: -512
-high: 511
+low: -64
+high: 319
 # on bottom

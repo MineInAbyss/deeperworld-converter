@@ -23,10 +23,10 @@ class ConverterConfig:
     world: str = "world"
     spacing: int = 16384
     overlap: int = 32
-    low: int = -512
-    high: int = 511
-    # how high is the top of the first region? goes down with the list
-    start_height: int = 256
+    low: int = -64
+    high: int = 319
+    # how high is the top ref of the first region? goes down with the list
+    start_height: int = 0
 
 
 @dataclass
@@ -74,9 +74,11 @@ class LayerConfig:
     @property
     def src_selection(self):
         return SelectionBox(self.max.cords(), self.min.cords())
+
     @property
     def offset(self):
         return Vec3I.sub(self.pos, self.max)
+
     @property
     def dst_selection(self):
         return SelectionBox(self.pos.cords(), Vec3I.add(self.pos, Vec3I.sub(self.min, self.max)).cords())
@@ -156,59 +158,106 @@ def progress_iter(gen, name):
 
 
 def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
-    # structure = progress_iter(ImmutableStructure.from_level_iter(
-    #     src_world, SelectionGroup(src_region), dimension), "load")
-    volume = src_region.volume
+    print("copy", src_region, dst_region)
+
+    # def do_single_copy(sp, dp):
+    #     # print(sp, dp)
+    #     (sx, sy, sz) = sp
+    #     (dx, dy, dz) = dp
+    #     (block, block_entity) = src_world.get_version_block(
+    #         sx, sy, sz, dimension, platform_version)
+    #     dst_world.set_version_block(
+    #         dx, dy, dz, dimension, platform_version, block, block_entity)
+    # list(map(do_single_copy, src_region.blocks, dst_region.blocks))
+    # mark_box_dirty(dst_world, dimension, dst_region)
+    # return
+
     cx = ((dst_region.max_x + dst_region.min_x) >> 1)
     cy = ((dst_region.max_y + dst_region.min_y) >> 1)  # Paste is from-centre
     cz = ((dst_region.max_z + dst_region.min_z) >> 1)
     dst_region_midpoint = (cx, cy, cz)
-    print("clone", SelectionGroup(src_region), dst_region_midpoint)
 
-    clone_op = dst_world.paste_iter(src_world, dimension, SelectionGroup(src_region),
-    dimension, dst_region_midpoint)
-    progress_iter(clone_op, "clone")
-    #print("marking as dirty")
-    mark_box_dirty(dst_world, dimension, dst_region)
-    #print("did a copy")
+    structure = ImmutableStructure.from_level(
+        src_world, SelectionGroup(src_region), dimension)
+
+    clone_op = dst_world.paste_iter(structure, structure.dimensions[0], SelectionGroup(src_region),
+                                    dimension, dst_region_midpoint)
+    progress_iter(clone_op, "copy")
+    # print("marking as dirty")
+    # mark_box_dirty(dst_world, dimension, dst_region)
+    # print("did a copy")
     # for cx, cz in src_region.chunk_locations():
     #     print("copy chunk", cx, cz, "from", src_world.level_path)
 
-
+levels = dict()
+def load_word(name):
+    if name in levels:
+        return levels.get(name)
+    source_level = amulet.load_level(
+            os.path.join(worlds_input_path, name))
+    levels[name] = source_level
+    return source_level
 def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
-    #regions.reverse()
+    regions.reverse()
+    height = converter_confg.high - converter_confg.low
+    vspace = height - converter_confg.overlap
+    def do(region, s):
 
-    def do(region):
-        source_level = amulet.load_level(
-            os.path.join(worlds_input_path, region.world))
         count = itertools.count()
 
-        def sub_do(s):
-            i = next(count)
-            
+        sub_chunk_size = 512  # 16
+        #output_mask = SelectionBox((-560, 0, -32), (-560+sub_chunk_size, 255, -32+sub_chunk_size))
+        vo = s * vspace
+        realspace_output_mask = SelectionBox(
+            (-converter_confg.spacing/2,
+             converter_confg.low + vo,
+             -converter_confg.spacing/2),
+            (converter_confg.spacing/2,
+             converter_confg.high + vo,
+             converter_confg.spacing/2))
+
+        # add filter for testing
+        realspace_output_mask = SelectionBox.create_chunk_box(
+            16, 0, 32).intersection(realspace_output_mask)
+
+        src_selection = region.src_selection
+        offset = region.offset.cords()
+        dst_selection: SelectionBox = src_selection.create_moved_box(offset)
+        dst_selection = dst_selection.intersection(realspace_output_mask)
+        src_selection = dst_selection.create_moved_box(offset, subtract=True)
+        dst_selection = dst_selection.create_moved_box(
+            (converter_confg.spacing * s, -vo, 0))
+        cbs = list(src_selection.chunk_boxes(sub_chunk_size))
+
+        if src_selection.volume == 0:
+            # not my table
+            return
+        print("layer",s, region, len(cbs), src_selection.volume, dst_selection)
+        source_level = load_word(region.world)
+
+        offset = dst_selection.min_array - src_selection.min_array
+
+        def sub_do(s, i):
             _, src_selection = s
-            dst_selection= src_selection.transform((1,1,1), (0,0,0), region.offset.cords())
-            #_, dst_selection = d
+            dst_selection = src_selection.create_moved_box(offset)
+            # _, dst_selection = d
             print("region", i, src_selection, dst_selection)
             copy_region(source_level, src_selection,
                         level_out, dst_selection)
 
-            if(i % 100 == 0 or True):
-                progress_iter(level_out.save_iter(), "save")
-                source_level.unload()
-                level_out.unload()
-        sub_chunk_size = 512/2
-        print("layer", region.name, region.src_selection.chunk_count(sub_chunk_size), region.src_selection, region.dst_selection)
-
-        list(map(sub_do, region.src_selection.chunk_boxes(sub_chunk_size)))
+            progress_iter(level_out.save_iter(), "save")
+            level_out.unload_unchanged()
+            source_level.unload()
+        list(map(sub_do, cbs, count))
         progress_iter(level_out.save_iter(), "save")
-        source_level.unload()
         level_out.unload_unchanged()
+        source_level.unload()
 
     # with ProcessPoolExecutor() as executor:
     for region in regions:
-        do(region)
+        do(region, 0)
+        do(region, 1)
         # executor.
     # for region in regions:
     #     do(region)
