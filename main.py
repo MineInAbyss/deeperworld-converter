@@ -23,8 +23,12 @@ class ConverterConfig:
     world: str = "world"
     spacing: int = 16384
     overlap: int = 32
-    low: int = -64
-    high: int = 319
+    min_y: int = -64
+    height: int = 384
+    sub_chunk_size: int = 512
+    @property
+    def max_y(self):
+        return self.max_y - self.height
     # how high is the top ref of the first region? goes down with the list
     start_height: int = 0
 
@@ -181,7 +185,7 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
     structure = ImmutableStructure.from_level(
         src_world, SelectionGroup(src_region), dimension)
 
-    clone_op = dst_world.paste(structure, structure.dimensions[0], SelectionGroup(src_region),
+    dst_world.paste(structure, structure.dimensions[0], SelectionGroup(src_region),
                                     dimension, dst_region_midpoint)
     #progress_iter(clone_op, "copy")
     # print("marking as dirty")
@@ -201,8 +205,7 @@ def load_word(name):
 def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     regions.reverse()
-    height = converter_confg.high - converter_confg.low
-    vspace = -(height - converter_confg.overlap)
+    vspace = -(converter_confg.height - converter_confg.overlap)
     def do(region, s, region_file_box):
 
         count = itertools.count()
@@ -212,14 +215,15 @@ def do_conversion(regions: List[LayerConfig]):
         vo = s * vspace
         realspace_output_mask = SelectionBox(
             (-converter_confg.spacing/2,
-             converter_confg.low + vo,
+             converter_confg.min_y + vo,
              -converter_confg.spacing/2),
             (converter_confg.spacing/2,
-             converter_confg.high + vo,
+             converter_confg.max_y + vo,
              converter_confg.spacing/2))
 
         # add filter for testing
-        realspace_output_mask = realspace_output_mask.intersection(region_file_box)
+        if region_file_box:
+            realspace_output_mask = realspace_output_mask.intersection(region_file_box)
         # realspace_output_mask = SelectionBox.create_chunk_box(
         #     0, 0, 512).intersection(realspace_output_mask)
 
