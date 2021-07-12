@@ -1,0 +1,6 @@
+tp @e[y=-63,dy=16] ~16384 ~352 ~
+tp @e[y=319,dy=16] ~-16384 ~-352 ~
+
+
+execute as @e[y=319,dy=16] run tp ~-16384 ~-352 ~
+execute as @e[y=-63,dy=16] run tp ~16384 ~352 ~

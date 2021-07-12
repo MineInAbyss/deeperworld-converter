@@ -160,17 +160,18 @@ def progress_iter(gen, name):
 def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
     print("copy", src_region, dst_region)
 
-    # def do_single_copy(sp, dp):
-    #     # print(sp, dp)
-    #     (sx, sy, sz) = sp
-    #     (dx, dy, dz) = dp
-    #     (block, block_entity) = src_world.get_version_block(
-    #         sx, sy, sz, dimension, platform_version)
-    #     dst_world.set_version_block(
-    #         dx, dy, dz, dimension, platform_version, block, block_entity)
-    # list(map(do_single_copy, src_region.blocks, dst_region.blocks))
-    # mark_box_dirty(dst_world, dimension, dst_region)
-    # return
+    if False:
+        def do_single_copy(sp, dp):
+            # print(sp, dp)
+            (sx, sy, sz) = sp
+            (dx, dy, dz) = dp
+            (block, block_entity) = src_world.get_version_block(
+                sx, sy, sz, dimension, platform_version)
+            dst_world.set_version_block(
+                dx, dy, dz, dimension, platform_version, block, block_entity)
+        list(map(do_single_copy, src_region.blocks, dst_region.blocks))
+        mark_box_dirty(dst_world, dimension, dst_region)
+        return
 
     cx = ((dst_region.max_x + dst_region.min_x) >> 1)
     cy = ((dst_region.max_y + dst_region.min_y) >> 1)  # Paste is from-centre
@@ -201,7 +202,7 @@ def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     regions.reverse()
     height = converter_confg.high - converter_confg.low
-    vspace = height - converter_confg.overlap
+    vspace = -(height - converter_confg.overlap)
     def do(region, s):
 
         count = itertools.count()
@@ -219,7 +220,7 @@ def do_conversion(regions: List[LayerConfig]):
 
         # add filter for testing
         realspace_output_mask = SelectionBox.create_chunk_box(
-            16, 0, 32).intersection(realspace_output_mask)
+            0, 0, 512).intersection(realspace_output_mask)
 
         src_selection = region.src_selection
         offset = region.offset.cords()
@@ -246,18 +247,21 @@ def do_conversion(regions: List[LayerConfig]):
             copy_region(source_level, src_selection,
                         level_out, dst_selection)
 
-            progress_iter(level_out.save_iter(), "save")
-            level_out.unload_unchanged()
-            source_level.unload()
+            # level_out.unload_unchanged()
+            # source_level.unload()
         list(map(sub_do, cbs, count))
-        progress_iter(level_out.save_iter(), "save")
-        level_out.unload_unchanged()
-        source_level.unload()
+        
+        #progress_iter(level_out.save_iter(), "save")
+        #level_out.unload()
+        #source_level.unload()
 
     # with ProcessPoolExecutor() as executor:
-    for region in regions:
-        do(region, 0)
-        do(region, 1)
+    for s in range(20):
+        for region in regions:
+            do(region, s)
+        progress_iter(level_out.save_iter(), "save")
+        level_out.save()
+        level_out.unload()
         # executor.
     # for region in regions:
     #     do(region)
@@ -266,7 +270,7 @@ def do_conversion(regions: List[LayerConfig]):
     #     copy_region(source_level, region.src_selection,
     #                 level_out, region.dst_selection)
     #     source_level.close()
-
+    progress_iter(level_out.save_iter(), "save")
     level_out.close()
     # can't create anvil worlds becuse fml
     # (platform, version) = platform_version
