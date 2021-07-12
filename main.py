@@ -219,8 +219,8 @@ def do_conversion(regions: List[LayerConfig]):
              converter_confg.spacing/2))
 
         # add filter for testing
-        realspace_output_mask = SelectionBox.create_chunk_box(
-            0, 0, 512).intersection(realspace_output_mask)
+        # realspace_output_mask = SelectionBox.create_chunk_box(
+        #     0, 0, 512).intersection(realspace_output_mask)
 
         src_selection = region.src_selection
         offset = region.offset.cords()
@@ -256,10 +256,16 @@ def do_conversion(regions: List[LayerConfig]):
         #source_level.unload()
 
     # with ProcessPoolExecutor() as executor:
-    for s in range(20):
+    total_size = SelectionGroup()
+    for region in regions:
+        total_size = total_size.union(region.dst_selection)
+    total_height = total_size.max_y - total_size.min_y
+    num_slices = int(total_height / -vspace) + 1
+    print(total_size.bounds, num_slices)
+    for s in range(num_slices):
         for region in regions:
             do(region, s)
-        progress_iter(level_out.save_iter(), "save")
+        #progress_iter(level_out.save_iter(), "save")
         level_out.save()
         level_out.unload()
         # executor.
