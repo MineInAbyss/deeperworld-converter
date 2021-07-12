@@ -206,13 +206,13 @@ def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     regions.reverse()
     vspace = -(converter_confg.height - converter_confg.overlap)
-    def do(region, s, region_file_box):
+    def do(region, slice, region_file_box):
 
         count = itertools.count()
 
-        sub_chunk_size = 512  # 16
+        sub_chunk_size = converter_confg.sub_chunk_size  # 16
         #output_mask = SelectionBox((-560, 0, -32), (-560+sub_chunk_size, 255, -32+sub_chunk_size))
-        vo = s * vspace
+        vo = slice * vspace
         realspace_output_mask = SelectionBox(
             (-converter_confg.spacing/2,
              converter_confg.min_y + vo,
@@ -224,8 +224,6 @@ def do_conversion(regions: List[LayerConfig]):
         # add filter for testing
         if region_file_box:
             realspace_output_mask = realspace_output_mask.intersection(region_file_box)
-        # realspace_output_mask = SelectionBox.create_chunk_box(
-        #     0, 0, 512).intersection(realspace_output_mask)
 
         src_selection = region.src_selection
         offset = region.offset.cords()
@@ -233,28 +231,20 @@ def do_conversion(regions: List[LayerConfig]):
         dst_selection = dst_selection.intersection(realspace_output_mask)
         src_selection = dst_selection.create_moved_box(offset, subtract=True)
         dst_selection = dst_selection.create_moved_box(
-            (converter_confg.spacing * s, -vo, 0))
-        cbs = list(src_selection.chunk_boxes(sub_chunk_size))
-
+            (converter_confg.spacing * slice, -vo, 0))
+        
         if src_selection.volume == 0:
             # not my table
             return
-        print("layer",s, region, len(cbs), src_selection.volume, dst_selection)
+        print("layer",slice, region, src_selection.volume, dst_selection)
         source_level = load_word(region.world)
 
         offset = dst_selection.min_array - src_selection.min_array
 
-        def sub_do(s, i):
-            _, src_selection = s
-            dst_selection = src_selection.create_moved_box(offset)
-            # _, dst_selection = d
-            print("region", i, src_selection, dst_selection)
-            copy_region(source_level, src_selection,
-                        level_out, dst_selection)
+        # _, dst_selection = d
+        copy_region(source_level, src_selection,
+                    level_out, dst_selection)
 
-            # level_out.unload_unchanged()
-            # source_level.unload()
-        list(map(sub_do, cbs, count))
         
         #progress_iter(level_out.save_iter(), "save")
         #level_out.unload()
@@ -265,7 +255,7 @@ def do_conversion(regions: List[LayerConfig]):
     for region in regions:
         total_size = total_size.union(region.dst_selection)
     total_height = total_size.max_y - total_size.min_y
-    num_slices = int(total_height / -vspace) + 1
+    num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
     region_file_boxes = {region_file_box for _,region_file_box in total_size.chunk_boxes()}
     for slice in range(num_slices):
@@ -301,4 +291,16 @@ def do_conversion(regions: List[LayerConfig]):
 
 converter_confg = load_converter_confg()
 regions = load_deeperworld_confg(converter_confg)
-do_conversion(regions)
+import shutil
+import json
+
+if os.path.exists(worlds_output_path):
+    shutil.rmtree(worlds_output_path, )
+shutil.copytree("./server", worlds_output_path)
+
+datapack_dir = os.path.join(worlds_output_path, "world", "datapacks", "deeper_world")
+with open(os.path.join(datapack_dir, "data", "minecraft", "dimension_type", "overworld.json"), 'r') as f:
+    overworld = json.load(f)
+    overworld["height"] = converter_confg.height
+    overworld["min_y"] = converter_confg.min_y
+#do_conversion(regions)

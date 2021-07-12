@@ -1,6 +1,6 @@
 world: world
 spacing: 16384
 # how big is the overlap?
-overlap: 32
-min_y: -64
-height: 384
+overlap: 0
+min_y: -6737
+height: 6992
