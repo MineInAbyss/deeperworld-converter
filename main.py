@@ -181,9 +181,9 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
     structure = ImmutableStructure.from_level(
         src_world, SelectionGroup(src_region), dimension)
 
-    clone_op = dst_world.paste_iter(structure, structure.dimensions[0], SelectionGroup(src_region),
+    clone_op = dst_world.paste(structure, structure.dimensions[0], SelectionGroup(src_region),
                                     dimension, dst_region_midpoint)
-    progress_iter(clone_op, "copy")
+    #progress_iter(clone_op, "copy")
     # print("marking as dirty")
     # mark_box_dirty(dst_world, dimension, dst_region)
     # print("did a copy")
@@ -203,7 +203,7 @@ def do_conversion(regions: List[LayerConfig]):
     regions.reverse()
     height = converter_confg.high - converter_confg.low
     vspace = -(height - converter_confg.overlap)
-    def do(region, s):
+    def do(region, s, region_file_box):
 
         count = itertools.count()
 
@@ -219,6 +219,7 @@ def do_conversion(regions: List[LayerConfig]):
              converter_confg.spacing/2))
 
         # add filter for testing
+        realspace_output_mask = realspace_output_mask.intersection(region_file_box)
         # realspace_output_mask = SelectionBox.create_chunk_box(
         #     0, 0, 512).intersection(realspace_output_mask)
 
@@ -262,12 +263,15 @@ def do_conversion(regions: List[LayerConfig]):
     total_height = total_size.max_y - total_size.min_y
     num_slices = int(total_height / -vspace) + 1
     print(total_size.bounds, num_slices)
-    for s in range(num_slices):
-        for region in regions:
-            do(region, s)
+    region_file_boxes = {region_file_box for _,region_file_box in total_size.chunk_boxes()}
+    for slice in range(num_slices):
+        for region_file_box in region_file_boxes:
+            for region in regions:
+                do(region, slice, region_file_box)
+            level_out.save()
+            level_out.unload()
         #progress_iter(level_out.save_iter(), "save")
-        level_out.save()
-        level_out.unload()
+        
         # executor.
     # for region in regions:
     #     do(region)
