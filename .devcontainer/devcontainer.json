@@ -15,7 +15,7 @@
 	},
 	"mounts": [
 		"source=${env:HOME}${env:USERPROFILE}/saves/minecraft,target=/mnt/world,type=bind,consistency=cached",
-		"type=tmpfs,destination=/mnt/cache"
+		"type=tmpfs,destination=/tmp",
 		],
 
 	// Set *default* container specific settings.json values on container create.

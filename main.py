@@ -1,23 +1,21 @@
 import os
-import amulet.api.paths
-def _get_cache_dir():
-    return "/mnt/cache"
+import shutil
+import json
 
-amulet.api.paths.get_cache_dir = _get_cache_dir
 
 import itertools
-from amulet.api.selection import SelectionGroup, SelectionBox
-from amulet.api.level import ImmutableStructure, World
-from amulet.api.level.base_level.clone import clone
-from amulet.api.data_types import Dimension, BlockCoordinatesAny, BlockCoordinates
+
 import yaml
-import amulet
-from amulet.api.errors import ChunkLoadError, ChunkDoesNotExist
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from dataclasses import dataclass
 from typing import List
-worlds_input_path = "/mnt/world/input/"
+
+worlds_input_path_disk = "/mnt/world/input/"
+worlds_input_path = "/tmp/input"
+if not os.path.exists(worlds_input_path):
+    shutil.copytree(worlds_input_path_disk, worlds_input_path)
+
 worlds_output_path = "/mnt/world/output/"
 deeperworld_config_path = os.path.join(
     worlds_input_path, "plugins/DeeperWorld/config.yml")
@@ -84,6 +82,7 @@ class LayerConfig:
 
     @property
     def src_selection(self):
+        from amulet.api.selection import SelectionBox
         return SelectionBox(self.max.cords(), self.min.cords())
 
     @property
@@ -92,6 +91,7 @@ class LayerConfig:
 
     @property
     def dst_selection(self):
+        from amulet.api.selection import SelectionBox
         return SelectionBox(self.pos.cords(), Vec3I.add(self.pos, Vec3I.sub(self.min, self.max)).cords())
 
 
@@ -136,9 +136,10 @@ def load_converter_confg():
 
 platform_version = ("java", (1, 17, 1))
 dimension = "minecraft:overworld"
+converter_confg = load_converter_confg()
 
 
-def mark_box_dirty(world: World, dimension, box):
+def mark_box_dirty(world, dimension, box):
     for cx, cz in box.chunk_locations():  # Mark the edits as dirty
         if(world.has_chunk(cx, cz, dimension)):
             chunk = world.get_chunk(cx, cz, dimension)
@@ -168,21 +169,10 @@ def progress_iter(gen, name):
             return e.value
 
 
-def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
-    print("copy", src_region, dst_region)
-
-    if False:
-        def do_single_copy(sp, dp):
-            # print(sp, dp)
-            (sx, sy, sz) = sp
-            (dx, dy, dz) = dp
-            (block, block_entity) = src_world.get_version_block(
-                sx, sy, sz, dimension, platform_version)
-            dst_world.set_version_block(
-                dx, dy, dz, dimension, platform_version, block, block_entity)
-        list(map(do_single_copy, src_region.blocks, dst_region.blocks))
-        mark_box_dirty(dst_world, dimension, dst_region)
-        return
+def copy_region(src_world, src_region, dst_world, dst_region):
+    #print("copy", src_region, dst_region)
+    from amulet.api.selection import SelectionGroup
+    from amulet.api.level import ImmutableStructure
 
     cx = ((dst_region.max_x + dst_region.min_x) >> 1)
     cy = ((dst_region.max_y + dst_region.min_y) >> 1)  # Paste is from-centre
@@ -194,74 +184,66 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
 
     dst_world.paste(structure, structure.dimensions[0], SelectionGroup(src_region),
                     dimension, dst_region_midpoint)
-    #progress_iter(clone_op, "copy")
-    # print("marking as dirty")
-    # mark_box_dirty(dst_world, dimension, dst_region)
-    # print("did a copy")
-    # for cx, cz in src_region.chunk_locations():
-    #     print("copy chunk", cx, cz, "from", src_world.level_path)
 
+import tempfile
 
-levels = dict()
+def do_region(args):
+    import amulet
+    slice, region_file_box, layers = args
+    print("do region", slice, region_file_box)
+    amulet.api.cache._path = tempfile.mkdtemp("ldb")
+    vspace = -(converter_confg.height - converter_confg.overlap)
+    vo = slice * vspace
+    from amulet.api.selection import SelectionBox
 
+    realspace_output_mask = SelectionBox(
+        (-converter_confg.spacing/2,
+            converter_confg.min_y + vo,
+            -converter_confg.spacing/2),
+        (converter_confg.spacing/2,
+            converter_confg.max_y + vo,
+            converter_confg.spacing/2))
 
-def load_word(name):
-    if name in levels:
-        return levels.get(name)
-    source_level = amulet.load_level(
-        os.path.join(worlds_input_path, name))
-    levels[name] = source_level
-    return source_level
+    # add filter for testing
+    realspace_output_mask = realspace_output_mask.intersection(
+        region_file_box)
 
+    with tempfile.TemporaryDirectory(prefix="world_", suffix="ldb") as tmp_server_dir:
+        setup_server(converter_confg, tmp_server_dir)
+        real_world_regions_folder = os.path.join(worlds_output_path, "world", "region")
+        fake_regions_folder = os.path.join(tmp_server_dir, "world", "region")
+        level_out = amulet.load_level(os.path.join(tmp_server_dir, "world"))
+        for layer in layers:
+            src_selection = layer.src_selection
+            offset = layer.offset.cords()
+            dst_selection: SelectionBox = src_selection.create_moved_box(offset)
+            dst_selection = dst_selection.intersection(realspace_output_mask)
+            src_selection = dst_selection.create_moved_box(offset, subtract=True)
+            dst_selection = dst_selection.create_moved_box(
+                (converter_confg.spacing * slice, -vo, 0))
+
+            if src_selection.volume == 0:
+                # not my table
+                continue
+            #print("layer", slice, layer, src_selection.volume, dst_selection)
+            layer_world = amulet.load_level(os.path.join(worlds_input_path, layer.world))
+            
+            layer_world.level_wrapper.__class__.has_lock = True
+            offset = dst_selection.min_array - src_selection.min_array
+
+            # _, dst_selection = d
+            copy_region(layer_world, src_selection,
+                        level_out, dst_selection)
+            layer_world.close()
+            #source_level.close()
+        level_out.save()
+        #level_out.close() # closing here causes execptions
+        shutil.copytree(fake_regions_folder, real_world_regions_folder, dirs_exist_ok = True)
+        #print(fake_regions_folder, amulet.api.cache._path)
 
 def do_conversion(regions: List[LayerConfig]):
-    level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
-    regions.reverse()
     vspace = -(converter_confg.height - converter_confg.overlap)
-
-    def do(region, slice, region_file_box):
-
-        count = itertools.count()
-
-        sub_chunk_size = converter_confg.sub_chunk_size  # 16
-        #output_mask = SelectionBox((-560, 0, -32), (-560+sub_chunk_size, 255, -32+sub_chunk_size))
-        vo = slice * vspace
-        realspace_output_mask = SelectionBox(
-            (-converter_confg.spacing/2,
-             converter_confg.min_y + vo,
-             -converter_confg.spacing/2),
-            (converter_confg.spacing/2,
-             converter_confg.max_y + vo,
-             converter_confg.spacing/2))
-
-        # add filter for testing
-        if region_file_box:
-            realspace_output_mask = realspace_output_mask.intersection(
-                region_file_box)
-
-        src_selection = region.src_selection
-        offset = region.offset.cords()
-        dst_selection: SelectionBox = src_selection.create_moved_box(offset)
-        dst_selection = dst_selection.intersection(realspace_output_mask)
-        src_selection = dst_selection.create_moved_box(offset, subtract=True)
-        dst_selection = dst_selection.create_moved_box(
-            (converter_confg.spacing * slice, -vo, 0))
-
-        if src_selection.volume == 0:
-            # not my table
-            return
-        print("layer", slice, region, src_selection.volume, dst_selection)
-        source_level = load_word(region.world)
-
-        offset = dst_selection.min_array - src_selection.min_array
-
-        # _, dst_selection = d
-        copy_region(source_level, src_selection,
-                    level_out, dst_selection)
-
-        #progress_iter(level_out.save_iter(), "save")
-        # level_out.unload()
-        # source_level.unload()
+    from amulet.api.selection import SelectionGroup
 
     # with ProcessPoolExecutor() as executor:
     total_size = SelectionGroup()
@@ -269,48 +251,25 @@ def do_conversion(regions: List[LayerConfig]):
         total_size = total_size.union(region.dst_selection)
 
     # dev only take a small bit
-    total_size = SelectionBox.create_chunk_box(
-        0, 0, 512).intersection(total_size)
+    #total_size = SelectionBox.create_chunk_box(0, 0, 32).intersection(total_size)
 
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
-    region_file_boxes = {region_file_box for _,
-                         region_file_box in total_size.chunk_boxes(converter_confg.sub_chunk_size)}
-    for slice in range(num_slices):
-        for region_file_box in region_file_boxes:
-            for region in regions:
-                do(region, slice, region_file_box)
-            level_out.save()
-            level_out.unload()
-        #progress_iter(level_out.save_iter(), "save")
+    region_file_boxes = list({region_file_box for _,
+                         region_file_box in total_size.chunk_boxes(converter_confg.sub_chunk_size)})
+    stuff = list(itertools.product(range(num_slices), region_file_boxes, [regions]))
+    print(len(stuff))
 
-        # executor.
-    # for region in regions:
-    #     do(region)
-    #     source_level=amulet.load_level(
-    #         os.path.join(worlds_input_path, region.world))
-    #     copy_region(source_level, region.src_selection,
-    #                 level_out, region.dst_selection)
-    #     source_level.close()
-    progress_iter(level_out.save_iter(), "save")
-    level_out.close()
-    # can't create anvil worlds becuse fml
-    # (platform, version) = platform_version
-    # level_out = amulet.level.formats.anvil_world.AnvilFormat(level_out_path)
-    # level_out.create_and_open(platform, version)
-    # level_out.save()
-    # level_out.close()
-
-    # (block, block_entity) = level.get_version_block(
-    #     x, y, z, dimension, platform_version)
-    # level_out.set_version_block(
-    #     x, y, z, dimension, platform_version, block, block_entity)
+    with ProcessPoolExecutor() as executor:
+        list(executor.map(
+            do_region, 
+            stuff,
+        ))
 
 
 def setup_server(converter_confg: ConverterConfig, worlds_output_path):
-    import shutil
-    import json
+
 
     if os.path.exists(worlds_output_path):
         shutil.rmtree(worlds_output_path)
@@ -343,7 +302,6 @@ def setup_server(converter_confg: ConverterConfig, worlds_output_path):
         ])
 
 
-converter_confg = load_converter_confg()
 regions = load_deeperworld_confg(converter_confg)
 setup_server(converter_confg, worlds_output_path)
 do_conversion(regions)
