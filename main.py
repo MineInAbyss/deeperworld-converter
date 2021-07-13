@@ -1,10 +1,4 @@
 import os
-import amulet.api.paths
-def _get_cache_dir():
-    return "/mnt/cache"
-
-amulet.api.paths.get_cache_dir = _get_cache_dir
-
 import itertools
 from amulet.api.selection import SelectionGroup, SelectionBox
 from amulet.api.level import ImmutableStructure, World
@@ -171,19 +165,6 @@ def progress_iter(gen, name):
 def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, dst_region: SelectionBox):
     print("copy", src_region, dst_region)
 
-    if False:
-        def do_single_copy(sp, dp):
-            # print(sp, dp)
-            (sx, sy, sz) = sp
-            (dx, dy, dz) = dp
-            (block, block_entity) = src_world.get_version_block(
-                sx, sy, sz, dimension, platform_version)
-            dst_world.set_version_block(
-                dx, dy, dz, dimension, platform_version, block, block_entity)
-        list(map(do_single_copy, src_region.blocks, dst_region.blocks))
-        mark_box_dirty(dst_world, dimension, dst_region)
-        return
-
     cx = ((dst_region.max_x + dst_region.min_x) >> 1)
     cy = ((dst_region.max_y + dst_region.min_y) >> 1)  # Paste is from-centre
     cz = ((dst_region.max_z + dst_region.min_z) >> 1)
@@ -216,7 +197,6 @@ def load_word(name):
 
 def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
-    regions.reverse()
     vspace = -(converter_confg.height - converter_confg.overlap)
 
     def do(region, slice, region_file_box):
