@@ -1,6 +1,6 @@
-docker run --rm -it -v `pwd`:/data -p 25565:25565 \
--e MODE=spectator \
--e MEMORY=2G -e EULA=TRUE -e USE_AIKAR_FLAGS=true --name mc itzg/minecraft-server
+SCRIPT=$(readlink -f $0)
+SCRIPTPATH=`dirname $SCRIPT`
 
-#-e LEVEL_TYPE=flat -e 'GENERATOR_SETTINGS={"type":"minecraft:overworld","generator":{"type":"minecraft:flat","settings":{"biome":"minecraft:the_void","lakes":false,"features":false,"layers":[],"structures":{"structures":{}}}}}' \
-#-e TYPE=FABRIC 
+DATA=$SCRIPTPATH
+echo "DATA=$DATA"
+docker run --rm -it -v $DATA:/data -p 25565:25565 -e MEMORY=2G -e EULA=TRUE -e USE_AIKAR_FLAGS=true --name mc itzg/minecraft-server

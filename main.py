@@ -1,3 +1,10 @@
+import os
+import amulet.api.paths
+def _get_cache_dir():
+    return "/mnt/cache"
+
+amulet.api.paths.get_cache_dir = _get_cache_dir
+
 import itertools
 from amulet.api.selection import SelectionGroup, SelectionBox
 from amulet.api.level import ImmutableStructure, World
@@ -9,7 +16,6 @@ from amulet.api.errors import ChunkLoadError, ChunkDoesNotExist
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from dataclasses import dataclass
-import os
 from typing import List
 worlds_input_path = "/mnt/world/input/"
 worlds_output_path = "/mnt/world/output/"
@@ -26,9 +32,10 @@ class ConverterConfig:
     min_y: int = -64
     height: int = 384
     sub_chunk_size: int = 512
+
     @property
     def max_y(self):
-        return self.max_y - self.height
+        return self.height + self.min_y
     # how high is the top ref of the first region? goes down with the list
     start_height: int = 0
 
@@ -186,7 +193,7 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
         src_world, SelectionGroup(src_region), dimension)
 
     dst_world.paste(structure, structure.dimensions[0], SelectionGroup(src_region),
-                                    dimension, dst_region_midpoint)
+                    dimension, dst_region_midpoint)
     #progress_iter(clone_op, "copy")
     # print("marking as dirty")
     # mark_box_dirty(dst_world, dimension, dst_region)
@@ -194,18 +201,24 @@ def copy_region(src_world: World, src_region: SelectionBox, dst_world: World, ds
     # for cx, cz in src_region.chunk_locations():
     #     print("copy chunk", cx, cz, "from", src_world.level_path)
 
+
 levels = dict()
+
+
 def load_word(name):
     if name in levels:
         return levels.get(name)
     source_level = amulet.load_level(
-            os.path.join(worlds_input_path, name))
+        os.path.join(worlds_input_path, name))
     levels[name] = source_level
     return source_level
+
+
 def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     regions.reverse()
     vspace = -(converter_confg.height - converter_confg.overlap)
+
     def do(region, slice, region_file_box):
 
         count = itertools.count()
@@ -223,7 +236,8 @@ def do_conversion(regions: List[LayerConfig]):
 
         # add filter for testing
         if region_file_box:
-            realspace_output_mask = realspace_output_mask.intersection(region_file_box)
+            realspace_output_mask = realspace_output_mask.intersection(
+                region_file_box)
 
         src_selection = region.src_selection
         offset = region.offset.cords()
@@ -232,11 +246,11 @@ def do_conversion(regions: List[LayerConfig]):
         src_selection = dst_selection.create_moved_box(offset, subtract=True)
         dst_selection = dst_selection.create_moved_box(
             (converter_confg.spacing * slice, -vo, 0))
-        
+
         if src_selection.volume == 0:
             # not my table
             return
-        print("layer",slice, region, src_selection.volume, dst_selection)
+        print("layer", slice, region, src_selection.volume, dst_selection)
         source_level = load_word(region.world)
 
         offset = dst_selection.min_array - src_selection.min_array
@@ -245,19 +259,24 @@ def do_conversion(regions: List[LayerConfig]):
         copy_region(source_level, src_selection,
                     level_out, dst_selection)
 
-        
         #progress_iter(level_out.save_iter(), "save")
-        #level_out.unload()
-        #source_level.unload()
+        # level_out.unload()
+        # source_level.unload()
 
     # with ProcessPoolExecutor() as executor:
     total_size = SelectionGroup()
     for region in regions:
         total_size = total_size.union(region.dst_selection)
+
+    # dev only take a small bit
+    total_size = SelectionBox.create_chunk_box(
+        0, 0, 512).intersection(total_size)
+
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
-    region_file_boxes = {region_file_box for _,region_file_box in total_size.chunk_boxes()}
+    region_file_boxes = {region_file_box for _,
+                         region_file_box in total_size.chunk_boxes(converter_confg.sub_chunk_size)}
     for slice in range(num_slices):
         for region_file_box in region_file_boxes:
             for region in regions:
@@ -265,7 +284,7 @@ def do_conversion(regions: List[LayerConfig]):
             level_out.save()
             level_out.unload()
         #progress_iter(level_out.save_iter(), "save")
-        
+
         # executor.
     # for region in regions:
     #     do(region)
@@ -289,18 +308,42 @@ def do_conversion(regions: List[LayerConfig]):
     #     x, y, z, dimension, platform_version, block, block_entity)
 
 
+def setup_server(converter_confg: ConverterConfig, worlds_output_path):
+    import shutil
+    import json
+
+    if os.path.exists(worlds_output_path):
+        shutil.rmtree(worlds_output_path)
+    shutil.copytree("./server", worlds_output_path)
+
+    datapack_dir = os.path.join(
+        worlds_output_path, "world", "datapacks", "deeper_world")
+    overworld_dim_path = os.path.join(
+        datapack_dir, "data", "minecraft", "dimension_type", "overworld.json")
+    tp_fn_path = os.path.join(datapack_dir, "data",
+                              "deeper_world", "functions", "tp.mcfunction")
+
+    overworld = None
+    with open(overworld_dim_path, 'r') as f:
+        overworld = json.load(f)
+        overworld["height"] = converter_confg.height
+        overworld["min_y"] = converter_confg.min_y
+    with open(overworld_dim_path, 'w') as f:
+        json.dump(overworld, f)
+    with open(tp_fn_path, 'w') as f:
+        converter_confg.min_y
+        converter_confg.max_y
+        dy = converter_confg.overlap/2
+        x_tp = converter_confg.spacing
+        y_tp = converter_confg.height - dy
+        f.writelines([
+            f"tp @s[y={converter_confg.min_y} ,dy={dy}] ~{x_tp} ~{y_tp} ~",
+            "\n",
+            f"tp @s[y={converter_confg.max_y} ,dy={dy}] ~{-x_tp} ~{-y_tp} ~"
+        ])
+
+
 converter_confg = load_converter_confg()
 regions = load_deeperworld_confg(converter_confg)
-import shutil
-import json
-
-if os.path.exists(worlds_output_path):
-    shutil.rmtree(worlds_output_path, )
-shutil.copytree("./server", worlds_output_path)
-
-datapack_dir = os.path.join(worlds_output_path, "world", "datapacks", "deeper_world")
-with open(os.path.join(datapack_dir, "data", "minecraft", "dimension_type", "overworld.json"), 'r') as f:
-    overworld = json.load(f)
-    overworld["height"] = converter_confg.height
-    overworld["min_y"] = converter_confg.min_y
-#do_conversion(regions)
+setup_server(converter_confg, worlds_output_path)
+do_conversion(regions)

@@ -13,7 +13,10 @@
 			"NODE_VERSION": "lts/*"
 		}
 	},
-	"mounts": ["source=${env:HOME}${env:USERPROFILE}/saves/minecraft,target=/mnt/world,type=bind,consistency=cached"],
+	"mounts": [
+		"source=${env:HOME}${env:USERPROFILE}/saves/minecraft,target=/mnt/world,type=bind,consistency=cached",
+		"type=tmpfs,destination=/mnt/cache"
+		],
 
 	// Set *default* container specific settings.json values on container create.
 	"settings": { 
