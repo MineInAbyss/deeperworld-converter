@@ -249,8 +249,8 @@ def do_conversion(regions: List[LayerConfig]):
         total_size = total_size.union(region.dst_selection)
 
     #reverse dev only take a small bit
-    #total_size = SelectionBox.create_chunk_box(0, 0, 512).intersection(total_size)
-
+    total_size = total_size.intersection(SelectionBox.create_chunk_box(0, 0, 512))
+    total_size.volume
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
@@ -308,6 +308,7 @@ def setup_server(converter_confg: ConverterConfig, worlds_output_path):
         overworld = json.load(f)
         overworld["height"] = converter_confg.height
         overworld["min_y"] = converter_confg.min_y
+        overworld["logical_height"] = converter_confg.max_y
     with open(overworld_dim_path, 'w') as f:
         json.dump(overworld, f)
     with open(tp_fn_path, 'w') as f:
