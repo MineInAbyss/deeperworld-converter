@@ -196,7 +196,8 @@ def load_word(name):
 
 
 def do_conversion(regions: List[LayerConfig]):
-    level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
+    regions.reverse()
+    world_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     vspace = -(converter_confg.height - converter_confg.overlap)
 
     def do_region_conversion(region, slice, region_file_box):
@@ -233,7 +234,7 @@ def do_conversion(regions: List[LayerConfig]):
 
         # _, dst_selection = d
         copy_region(source_level, src_selection,
-                    level_out, dst_selection)
+                    world_out, dst_selection)
         return True
         #progress_iter(level_out.save_iter(), "save")
         # level_out.unload()
@@ -242,8 +243,9 @@ def do_conversion(regions: List[LayerConfig]):
     # with ProcessPoolExecutor() as executor:
     total_size = SelectionGroup([region.dst_selection for region in regions])
     # reverse dev only take a small bit
+    size = 256
     total_size = total_size.intersection(
-        SelectionBox.create_chunk_box(512/32, 0, 32))
+        SelectionBox((-size, - 2**32, -size), (size, 2**32, size)))
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
@@ -257,11 +259,10 @@ def do_conversion(regions: List[LayerConfig]):
                 did_something |= do_region_conversion(
                     region, slice, region_file_box)
             if did_something:
-                level_out.save()
-                level_out.unload()
+                world_out.save()
+        #world_out.unload()
         #progress_iter(level_out.save_iter(), "save")
-
-        # executor.
+    # executor.
     # for region in regions:
     #     do(region)
     #     source_level=amulet.load_level(
@@ -269,8 +270,8 @@ def do_conversion(regions: List[LayerConfig]):
     #     copy_region(source_level, region.src_selection,
     #                 level_out, region.dst_selection)
     #     source_level.close()
-    progress_iter(level_out.save_iter(), "save")
-    level_out.close()
+    #progress_iter(world_out.save_iter(), "save")
+    world_out.close()
     # can't create anvil worlds becuse fml
     # (platform, version) = platform_version
     # level_out = amulet.level.formats.anvil_world.AnvilFormat(level_out_path)
