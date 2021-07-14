@@ -256,7 +256,7 @@ def do_conversion(regions: List[LayerConfig]):
     print(total_size.bounds, num_slices)
     region_file_boxes = {region_file_box for _,
                          region_file_box in total_size.chunk_boxes(converter_confg.sub_chunk_size)}
-    num_things = len(itertools.product(region_file_boxes, range(num_slices), regions))
+    # num_things = len(itertools.product(region_file_boxes, range(num_slices), regions))
     for region_file_box in region_file_boxes:
         for slice in range(num_slices):
             for region in regions:
