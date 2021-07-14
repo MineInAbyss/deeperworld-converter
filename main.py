@@ -26,6 +26,7 @@ class ConverterConfig:
     min_y: int = -64
     height: int = 384
     sub_chunk_size: int = 512
+    pos_ref_top: List[int] = [0, 0, 0]
 
     @property
     def max_y(self):
@@ -99,7 +100,7 @@ def load_deeperworld_confg(config: ConverterConfig):
         data = (yaml.safe_load(f))
         sectionsIn = data["sections"]
         sectionsOut = []
-        ref_top_pos = Vec3I()  # where is the
+        ref_top_pos = Vec3I(converter_confg.pos_ref_top)  # where is the
         for sectionIn in sectionsIn:
             name = sectionIn["name"]
             world = sectionIn["world"]
@@ -211,9 +212,8 @@ def do_conversion(regions: List[LayerConfig]):
              converter_confg.spacing/2))
 
         # add filter for testing
-        if region_file_box:
-            realspace_output_mask = realspace_output_mask.intersection(
-                region_file_box)
+        realspace_output_mask = realspace_output_mask.intersection(
+            region_file_box)
 
         src_selection = region.src_selection
         offset = region.offset.cords()
@@ -243,9 +243,7 @@ def do_conversion(regions: List[LayerConfig]):
     # with ProcessPoolExecutor() as executor:
     total_size = SelectionGroup([region.dst_selection for region in regions])
     # reverse dev only take a small bit
-    size = 256
-    total_size = total_size.intersection(
-        SelectionBox((-size, - 2**32, -size), (size, 2**32, size)))
+    
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)

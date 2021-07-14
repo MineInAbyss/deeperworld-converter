@@ -4,3 +4,4 @@ spacing: 16384
 overlap: 32
 min_y: -64
 height: 320
+pos_ref_top: [0, 0, 0]
