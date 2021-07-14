@@ -248,17 +248,17 @@ def do_conversion(regions: List[LayerConfig]):
     for region in regions:
         total_size = total_size.union(region.dst_selection)
 
-    # dev only take a small bit
-    total_size = SelectionBox.create_chunk_box(
-        0, 0, 512).intersection(total_size)
+    #reverse dev only take a small bit
+    #total_size = SelectionBox.create_chunk_box(0, 0, 512).intersection(total_size)
 
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
     region_file_boxes = {region_file_box for _,
                          region_file_box in total_size.chunk_boxes(converter_confg.sub_chunk_size)}
-    for slice in range(num_slices):
-        for region_file_box in region_file_boxes:
+    num_things = len(itertools.product(region_file_boxes, range(num_slices), regions))
+    for region_file_box in region_file_boxes:
+        for slice in range(num_slices):
             for region in regions:
                 do(region, slice, region_file_box)
             level_out.save()
