@@ -199,12 +199,7 @@ def do_conversion(regions: List[LayerConfig]):
     level_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     vspace = -(converter_confg.height - converter_confg.overlap)
 
-    def do(region, slice, region_file_box):
-
-        count = itertools.count()
-
-        sub_chunk_size = converter_confg.sub_chunk_size  # 16
-        #output_mask = SelectionBox((-560, 0, -32), (-560+sub_chunk_size, 255, -32+sub_chunk_size))
+    def do_region_conversion(region, slice, region_file_box):
         vo = slice * vspace
         realspace_output_mask = SelectionBox(
             (-converter_confg.spacing/2,
@@ -229,7 +224,8 @@ def do_conversion(regions: List[LayerConfig]):
 
         if src_selection.volume == 0:
             # not my table
-            return
+            return False
+
         print("layer", slice, region, src_selection.volume, dst_selection)
         source_level = load_word(region.world)
 
@@ -238,19 +234,16 @@ def do_conversion(regions: List[LayerConfig]):
         # _, dst_selection = d
         copy_region(source_level, src_selection,
                     level_out, dst_selection)
-
+        return True
         #progress_iter(level_out.save_iter(), "save")
         # level_out.unload()
         # source_level.unload()
 
     # with ProcessPoolExecutor() as executor:
-    total_size = SelectionGroup()
-    for region in regions:
-        total_size = total_size.union(region.dst_selection)
-
-    #reverse dev only take a small bit
-    total_size = total_size.intersection(SelectionBox.create_chunk_box(0, 0, 512))
-    total_size.volume
+    total_size = SelectionGroup([region.dst_selection for region in regions])
+    # reverse dev only take a small bit
+    total_size = total_size.intersection(
+        SelectionBox.create_chunk_box(512/32, 0, 32))
     total_height = total_size.max_y - total_size.min_y
     num_slices = round(total_height / -vspace + 0.5)
     print(total_size.bounds, num_slices)
@@ -259,10 +252,13 @@ def do_conversion(regions: List[LayerConfig]):
     # num_things = len(itertools.product(region_file_boxes, range(num_slices), regions))
     for region_file_box in region_file_boxes:
         for slice in range(num_slices):
+            did_something = False
             for region in regions:
-                do(region, slice, region_file_box)
-            level_out.save()
-            level_out.unload()
+                did_something |= do_region_conversion(
+                    region, slice, region_file_box)
+            if did_something:
+                level_out.save()
+                level_out.unload()
         #progress_iter(level_out.save_iter(), "save")
 
         # executor.
