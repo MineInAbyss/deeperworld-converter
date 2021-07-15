@@ -10,7 +10,7 @@ from amulet.api.errors import ChunkLoadError, ChunkDoesNotExist
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 worlds_input_path = "/mnt/world/input/"
 worlds_output_path = "/mnt/world/output/"
 deeperworld_config_path = os.path.join(
@@ -26,7 +26,7 @@ class ConverterConfig:
     min_y: int = -64
     height: int = 384
     sub_chunk_size: int = 512
-    pos_ref_top: List[int] = [0, 0, 0]
+    pos_ref_top: Any = (0, 0, 0)
 
     @property
     def max_y(self):
@@ -100,7 +100,9 @@ def load_deeperworld_confg(config: ConverterConfig):
         data = (yaml.safe_load(f))
         sectionsIn = data["sections"]
         sectionsOut = []
-        ref_top_pos = Vec3I(converter_confg.pos_ref_top)  # where is the
+        ref_top_pos = Vec3I(*converter_confg.pos_ref_top)  # where is the
+        min_y_from_last = 2 ** 32
+        
         for sectionIn in sectionsIn:
             name = sectionIn["name"]
             world = sectionIn["world"]
@@ -116,6 +118,12 @@ def load_deeperworld_confg(config: ConverterConfig):
             size = Vec3I.sub(region_max, region_min)
             ref_top_pos = Vec3I.add(
                 ref_top_pos, Vec3I.sub(ref_bottom, ref_top))
+            
+            max_y_pos = region_min_pos.y + region_max.y - region_min.y 
+            
+            overlap = max(0, max_y_pos - min_y_from_last)
+            region_max.y -= overlap # remove the overlap
+            min_y_from_last = region_min_pos.y
             lc = LayerConfig(name, region_min, region_max,
                              region_min_pos, world)
             sectionsOut.append(lc)
@@ -197,7 +205,6 @@ def load_word(name):
 
 
 def do_conversion(regions: List[LayerConfig]):
-    regions.reverse()
     world_out = amulet.load_level(os.path.join(worlds_output_path, "world"))
     vspace = -(converter_confg.height - converter_confg.overlap)
 
@@ -242,15 +249,15 @@ def do_conversion(regions: List[LayerConfig]):
 
     # with ProcessPoolExecutor() as executor:
     total_size = SelectionGroup([region.dst_selection for region in regions])
-    # reverse dev only take a small bit
-    
+    total_size_simple = SelectionBox(total_size.max_array, total_size.min_array)
     total_height = total_size.max_y - total_size.min_y
-    num_slices = round(total_height / -vspace + 0.5)
+    num_slices = round((total_height + converter_confg.max_y - total_size_simple.max_y ) / -vspace + 0.5)
     print(total_size.bounds, num_slices)
-    region_file_boxes = {region_file_box for _,
-                         region_file_box in total_size.chunk_boxes(converter_confg.sub_chunk_size)}
+    region_file_boxes_simple = [region_file_box for _,
+                         region_file_box in total_size_simple.chunk_boxes(converter_confg.sub_chunk_size)]
+    print("i have to do", len(region_file_boxes_simple), "size", converter_confg.sub_chunk_size, "vert slices")
     # num_things = len(itertools.product(region_file_boxes, range(num_slices), regions))
-    for region_file_box in region_file_boxes:
+    for region_file_box in region_file_boxes_simple:
         for slice in range(num_slices):
             did_something = False
             for region in regions:
@@ -258,6 +265,7 @@ def do_conversion(regions: List[LayerConfig]):
                     region, slice, region_file_box)
             if did_something:
                 world_out.save()
+                world_out.unload_unchanged()
         #world_out.unload()
         #progress_iter(level_out.save_iter(), "save")
     # executor.
@@ -269,6 +277,7 @@ def do_conversion(regions: List[LayerConfig]):
     #                 level_out, region.dst_selection)
     #     source_level.close()
     #progress_iter(world_out.save_iter(), "save")
+    world_out.save()
     world_out.close()
     # can't create anvil worlds becuse fml
     # (platform, version) = platform_version

@@ -1,5 +1,5 @@
 world: world
-spacing: 16384
+spacing: 1024 # 16384
 # how big is the overlap?
 overlap: 32
 min_y: -64
