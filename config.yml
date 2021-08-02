@@ -1,7 +1,9 @@
 world: world
-spacing: 1024 # 16384
+spacing: 16384 # 16384
 # how big is the overlap?
 overlap: 32
-min_y: -64
-height: 320
+min_y: -256
+height: 512
 pos_ref_top: [0, 0, 0]
+first_region: 77
+last_region: -1

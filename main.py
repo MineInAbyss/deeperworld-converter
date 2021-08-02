@@ -27,7 +27,8 @@ class ConverterConfig:
     height: int = 384
     sub_chunk_size: int = 512
     pos_ref_top: Any = (0, 0, 0)
-
+    first_region: int = 0
+    last_region: int = -1
     @property
     def max_y(self):
         return self.height + self.min_y
@@ -234,7 +235,7 @@ def do_conversion(regions: List[LayerConfig]):
             # not my table
             return False
 
-        print("layer", slice, region, src_selection.volume, dst_selection)
+        #print("layer", slice, region, src_selection.volume, dst_selection)
         source_level = load_word(region.world)
 
         offset = dst_selection.min_array - src_selection.min_array
@@ -242,6 +243,7 @@ def do_conversion(regions: List[LayerConfig]):
         # _, dst_selection = d
         copy_region(source_level, src_selection,
                     world_out, dst_selection)
+        source_level.unload_unchanged()
         return True
         #progress_iter(level_out.save_iter(), "save")
         # level_out.unload()
@@ -254,15 +256,17 @@ def do_conversion(regions: List[LayerConfig]):
     num_slices = round((total_height + converter_confg.max_y - total_size_simple.max_y ) / -vspace + 0.5)
     print(total_size.bounds, num_slices)
     region_file_boxes_simple = [region_file_box for _,
-                         region_file_box in total_size_simple.chunk_boxes(converter_confg.sub_chunk_size)]
+                         region_file_box in total_size_simple.chunk_boxes(converter_confg.sub_chunk_size)][converter_confg.first_region:converter_confg.last_region]
     print("i have to do", len(region_file_boxes_simple), "size", converter_confg.sub_chunk_size, "vert slices")
     # num_things = len(itertools.product(region_file_boxes, range(num_slices), regions))
+    i = 0
     for region_file_box in region_file_boxes_simple:
+        print(f"doing box {converter_confg.first_region + i}")
+        i += 1
         for slice in range(num_slices):
             did_something = False
             for region in regions:
-                did_something |= do_region_conversion(
-                    region, slice, region_file_box)
+                did_something |= do_region_conversion(region, slice, region_file_box)
             if did_something:
                 world_out.save()
                 world_out.unload_unchanged()
@@ -330,5 +334,5 @@ def setup_server(converter_confg: ConverterConfig, worlds_output_path):
 
 converter_confg = load_converter_confg()
 regions = load_deeperworld_confg(converter_confg)
-setup_server(converter_confg, worlds_output_path)
+#setup_server(converter_confg, worlds_output_path)
 do_conversion(regions)
